@@ -1,3 +1,6 @@
+docopt==0.6.2
+motor==1.2.0
 pandas==0.19.1
+pylint==1.8.1
 requests==2.11.1
-
+yapf==0.20.0
