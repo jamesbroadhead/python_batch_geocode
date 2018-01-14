@@ -21,9 +21,15 @@ Shane Lynn
 import asyncio
 import logging
 import sys
-
+import shutil
+from os.path import exists as pexists
+from os.path import expanduser
+import json
 from db import get_collection, remaining_addresses, load_config
-from google import get_google_result_async
+from google import get_google_result
+
+from geo_csv import load_input, write_output
+from geo_enum import GEOCODE, FIXED_ADDRESS
 
 logger = logging.getLogger("root")
 logger.setLevel(logging.DEBUG)
@@ -33,23 +39,58 @@ ch.setLevel(logging.DEBUG)
 logger.addHandler(ch)
 
 
-
-# Set your input file here
-input_filename = sys.argv[1]
-
-# Set your output file name here.
-output_filename = 'data/results_{}'.format(input_filename)
+def load_config():
+    with open(expanduser('~/.geocode')) as fh:
+        return json.loads(fh.read())
 
 
+def load_data(input_filename, output_filename):
 
-#------------------ DATA LOADING --------------------------------
+    if not pexists(output_filename):
+        print('Partial results not found - starting from scratch')
+        shutil.copyfile(input_filename, output_filename)
 
-config = load_config()
-collection = get_collection()
-f = remaining_addresses(collection)
+    print('Loading input')
+    config = load_config()
+    data = load_input(output_filename, config['address_column_name'], config['county_column_name'], config['country'])
+    print('Loading complete')
 
-loop = asyncio.get_event_loop()
-remaining_work = loop.run_until_complete(f)
-print('Remaining work: {}'.format(len(remaining_work)))
+    return data
 
-get_google_result_async(remaining_work, config)
+
+def main(input_filename):
+    output_filename = 'data/results_{}'.format(input_filename)
+    data = load_data(input_filename, output_filename)
+
+    for index, row_namedtuple in enumerate(data.itertuples()):
+        row = row_namedtuple._asdict()
+
+        if row.get(GEOCODE, None) is not None:
+            # we have data already
+            continue
+
+        address = row.get(FIXED_ADDRESS, None)
+        if address is None:
+            # no address - write a dummy value
+            result = 'NO_ADDRESS'
+        else:
+            result = get_google_result(address, api_key=None, return_full_response=False)
+
+        # row[GEOCODE] = result
+
+        data.set_value(index, GEOCODE, result)
+
+        if index > 0 and index % 10 == 0:
+            print('Saving partial results - progress: {}/{}'.format(index, len(data)))
+            write_output(output_filename, data)
+            print('Saved')
+
+        # TODO this limits rate-limit usage during dev
+        if index > 50:
+            sys.exit(0)
+
+
+
+if __name__ == '__main__':
+    input_filename = sys.argv[1]
+    main(input_filename)

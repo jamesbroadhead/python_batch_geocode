@@ -13,9 +13,9 @@ import docopt
 import motor.motor_asyncio
 from pymongo import InsertOne
 
-from load_csv import load_input
+from geo_csv import load_input
 
-GEOCODE = 'GEOCODE'
+from geo_enum import FIXED_ADDRESS, GEOCODE
 
 def load_config():
     with open(expanduser('~/.geocode')) as fh:
@@ -46,8 +46,6 @@ async def remaining_addresses(collection):
 async def update_record(data, geocode):
     collection = get_collection()
     return collection.update(data, { '$set': { GEOCODE: geocode } }, upsert=False, multi=False)
-
-
 
 
 def main(input_filename):
