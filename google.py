@@ -43,7 +43,6 @@ def get_google_result_and_write_to_db(work, api_key=None, return_full_response=F
         print('Failed for some other reason: {}'.format(e.args))
 
 
-
 def get_google_result(address, api_key=None, return_full_response=False):
     """
     Get geocode results from Google Maps Geocoding API.
@@ -68,7 +67,7 @@ def get_google_result(address, api_key=None, return_full_response=False):
     results = results.json()
 
     if results['status'] == 'OVER_QUERY_LIMIT':
-        raise OverQueryLimit()
+        raise OverQueryLimit(results)
 
     # if there's no results or an error, return empty results.
     if not results['results']:

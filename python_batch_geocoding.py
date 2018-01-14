@@ -19,17 +19,21 @@ Shane Lynn
 5th November 2016
 """
 import asyncio
+from datetime import datetime, timedelta
 import logging
 import sys
 import shutil
+import os
 from os.path import exists as pexists
-from os.path import expanduser
+from os.path import expanduser, isdir, abspath, dirname
 import json
 from db import get_collection, remaining_addresses, load_config
-from google import get_google_result
-
-from geo_csv import load_input, write_output
+from google import get_google_result, OverQueryLimit
+import math
+from geo_csv import load_input, write_output, empty_cells
 from geo_enum import GEOCODE, FIXED_ADDRESS
+from numpy import NaN
+import time
 
 logger = logging.getLogger("root")
 logger.setLevel(logging.DEBUG)
@@ -37,6 +41,7 @@ logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 logger.addHandler(ch)
+
 
 
 def load_config():
@@ -47,6 +52,11 @@ def load_config():
 def load_data(input_filename, output_filename):
 
     if not pexists(output_filename):
+        parent = dirname(abspath(output_filename))
+
+        if not isdir(parent):
+            os.makedirs(parent)
+
         print('Partial results not found - starting from scratch')
         shutil.copyfile(input_filename, output_filename)
 
@@ -58,6 +68,23 @@ def load_data(input_filename, output_filename):
     return data
 
 
+def assess_failures(recent_failures):
+    now = datetime.now()
+
+    recent_failures.append(now)
+    if len(recent_failures) > 1:
+        recent_failures = recent_failures[1:4]
+
+    if recent_failures[0] < now - timedelta(minutes=1):
+        print('Taking a 1m break')
+        time.sleep(60)
+    else:
+        print('Taking a 5s break')
+        time.sleep(5)
+
+
+
+last_3_failures = []
 def main(input_filename):
     output_filename = 'data/results_{}'.format(input_filename)
     data = load_data(input_filename, output_filename)
@@ -65,29 +92,41 @@ def main(input_filename):
     for index, row_namedtuple in enumerate(data.itertuples()):
         row = row_namedtuple._asdict()
 
-        if row.get(GEOCODE, None) is not None:
+        existing_geocode = row.get(GEOCODE, None)
+        if existing_geocode not in empty_cells:
             # we have data already
             continue
 
         address = row.get(FIXED_ADDRESS, None)
-        if address is None:
+        if address in empty_cells:
+            print('Missing address')
             # no address - write a dummy value
             result = 'NO_ADDRESS'
         else:
-            result = get_google_result(address, api_key=None, return_full_response=False)
+            print('Calling google...')
 
-        # row[GEOCODE] = result
+            try:
+                api_response = get_google_result(address, api_key=None, return_full_response=False)
+                result = api_response['formatted_address']
 
-        data.set_value(index, GEOCODE, result)
+                data.set_value(index, GEOCODE, result)
 
-        if index > 0 and index % 10 == 0:
-            print('Saving partial results - progress: {}/{}'.format(index, len(data)))
-            write_output(output_filename, data)
-            print('Saved')
+                if index > 0 and index % 10 == 0:
+                    print('Saving partial results - progress: {}/{}'.format(index, len(data)))
+                    write_output(output_filename, data)
 
-        # TODO this limits rate-limit usage during dev
-        if index > 50:
-            sys.exit(0)
+            except OverQueryLimit as e:
+                # NOTE: if this happens, we skip this address & will need to re-run the script later to fill it in
+                print('Failed - Over the Query Limit - progress: {}/{} - {}'.format(index, len(data), e.args))
+                write_output(output_filename, data)
+                assess_failures(last_3_failures)
+
+            except Exception as e:
+                # NOTE: if this happens, we skip this address & will need to re-run the script later to fill it in
+                print('Failed - Unknown error- progress: {}/{} - {}'.format(index, len(data), e.args))
+                write_output(output_filename, data)
+                assess_failures(last_3_failures)
+
 
 
 
